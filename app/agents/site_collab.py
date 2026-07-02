@@ -169,6 +169,16 @@ def render_context(
         "- 覆盖要求：发现 API/入口后要逐项做最小安全验证；没出洞也要用 report_coverage 记录覆盖面。",
         "- 收敛规则：能打穿就 submit_finding；有明确据点但差一步就写 deepen_lead；无实证不要交半成品。",
     ]
+    if route.phase > 0:
+        # 主题深挖路线：区别于侦察路线，强调复用侦察成果 + 多轮深挖 + 用 deepen_lead 触发自动接力。
+        lines += [
+            "- 深挖纪律：你是【深挖路线】不是浅扫。围绕本路线 focus 把每个候选入口都测到有结论——"
+            "打穿就 submit_finding；差一步（有据点但缺 ID/凭据/回显）就写 deepen_lead，"
+            "系统会自动接力深挖、出洞后还会自动扩大危害；确认无洞也要说清测了哪些入口、为何不通。"
+            "不要首页加几个常见路径扫一遍就 finish。",
+            "- 复用侦察：前序 site_map/site_js 已盘点全站入口与 JS/API（见下方覆盖摘要）。"
+            "优先在这些已知入口上做本路线的定向验证，别从零重新泛泛侦察，把算力花在真正打穿上。",
+        ]
     if site_info.strip():
         lines += ["", "# 用户提供的目标相关信息", site_info.strip()[:2000]]
     if coverage_block.strip():

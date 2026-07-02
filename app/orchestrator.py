@@ -746,6 +746,11 @@ class TaskRunner:
         """
         if _has_usable_leaked_cred(target.leaked_creds):
             return "存在已验证可用泄露凭据，值得换角度深挖一次"
+        # 单站协作的主题/追打路线（认证越权/未授权/文件/注入/逻辑/定向追打）带着明确 focus
+        # 来深挖，打不穿时值得换角度再来一轮；discovery 侦察路线(phase==0)不在此列。
+        route = site_collab.route_for_source(target.source or "")
+        if route is not None and route.phase != 0:
+            return f"单站协作深挖路线（{route.label}），换角度再打一轮"
         score_reason = target.priority_reason or ""
         for marker in _NO_VULN_RETRY_PRIORITY_MARKERS:
             if marker in score_reason:
@@ -1237,6 +1242,51 @@ class TaskRunner:
                 priority_reason=reason,
             ))
             reason_pool.add(reason)
+            added += 1
+        return added
+
+    async def _spawn_site_theme_routes(
+        self,
+        session: AsyncSession,
+        task_id: str,
+        tgt: Target,
+    ) -> int:
+        """discovery 侦察路线(map/js)完成后，自动派发 5 条主题深挖路线。
+
+        单站协作的真正分工在这里落地：先由 site_map/site_js 摸清入口与 JS/API，
+        再由 认证越权 / 未授权配置 / 文件 / 注入RCE / 业务逻辑 五条主题路线分头深挖，
+        每条主题 worker 派发时都会带上前序侦察的 coverage 上下文（见 _run_worker_inner）。
+
+        - 仅在 discovery 路线(phase==0)完成后触发；
+        - 每个 host 只派一次（靠 source 存在性去重 + 唯一索引 + savepoint 兜并发）；
+        - 主题路线本身不会再触发本函数（phase>0）。
+        """
+        route = site_collab.route_for_source(tgt.source or "")
+        if not route or route.phase != 0:
+            return 0
+        existing = (await session.execute(
+            select(Target.source).where(Target.task_id == task_id, Target.host == tgt.host)
+        )).all()
+        existing_sources = {str(r[0] or "") for r in existing}
+        added = 0
+        for troute in site_collab.FOLLOWUP_ROUTES:
+            if troute.source in existing_sources:
+                continue
+            try:
+                async with session.begin_nested():
+                    session.add(Target(
+                        task_id=task_id,
+                        url=tgt.url,
+                        host=tgt.host,
+                        source=troute.source,
+                        status="queued",
+                        priority_score=troute.priority,
+                        priority_reason=site_collab.route_reason(troute),
+                    ))
+            except IntegrityError:
+                # 并发：另一条 discovery worker 已派过同款主题路线，跳过。
+                continue
+            existing_sources.add(troute.source)
             added += 1
         return added
 
@@ -1883,6 +1933,23 @@ class TaskRunner:
                             "spawned": spawned,
                         },
                     ))
+
+            # 单站协作：discovery 侦察路线完成 → 自动派发 5 条主题深挖路线（先侦察后分工）。
+            theme_spawned = await self._spawn_site_theme_routes(session, task_id, tgt)
+            if theme_spawned:
+                session.add(TaskEvent(
+                    task_id=task_id,
+                    agent="orchestrator",
+                    kind="site_theme_routes_spawned",
+                    level="info",
+                    message=f"单站协作侦察完成（{tgt.source}），已派发 {theme_spawned} 条主题深挖路线",
+                    payload={
+                        "target_id": target_id,
+                        "host": dedup.normalize_host(tgt.url or tgt.host),
+                        "source": tgt.source,
+                        "spawned": theme_spawned,
+                    },
+                ))
 
             if quota_llm_error:
                 tgt.verdict = ""
