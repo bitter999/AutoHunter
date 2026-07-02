@@ -774,9 +774,13 @@ async def report_assistant(finding_id: str, req: ReportAssistantRequest,
     # 必须封顶并发，避免一堆助手请求把池子占满拖垮挖掘。
     assistant_sem = agent_semaphore("assistant")
     await assistant_sem.acquire()
-    future = loop.run_in_executor(
-        AGENT_EXECUTOR, lambda: _run_report_assistant(f, r, task, llm_req, cancel_event),
-    )
+    try:
+        future = loop.run_in_executor(
+            AGENT_EXECUTOR, lambda: _run_report_assistant(f, r, task, llm_req, cancel_event),
+        )
+    except BaseException:
+        assistant_sem.release()
+        raise
 
     def _release_assistant(fut) -> None:
         assistant_sem.release()
@@ -842,10 +846,14 @@ async def report_assistant_stream(finding_id: str, req: ReportAssistantRequest,
     async def _gen():
         assistant_sem = agent_semaphore("assistant")
         await assistant_sem.acquire()
-        future = loop.run_in_executor(
-            AGENT_EXECUTOR,
-            lambda: _run_report_assistant(f, r, task, llm_req, cancel_event, emit=_emit),
-        )
+        try:
+            future = loop.run_in_executor(
+                AGENT_EXECUTOR,
+                lambda: _run_report_assistant(f, r, task, llm_req, cancel_event, emit=_emit),
+            )
+        except BaseException:
+            assistant_sem.release()
+            raise
 
         def _release_assistant(fut) -> None:
             assistant_sem.release()

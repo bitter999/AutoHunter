@@ -31,7 +31,10 @@ from app.agents.deepen import DEEPEN_CAP  # 单 target 深挖上限（人工+AI 
 from app.agents.prompts import is_enterprise_src, should_escalate
 from app.agents.reviewer import Reviewer
 from app.agents.worker import Worker
-from app.agent_runtime import AGENT_EXECUTOR, COLLECTOR_IO_EXECUTOR, agent_semaphore, shutdown_agent_executor
+from app.agent_runtime import (
+    AGENT_EXECUTOR, COLLECTOR_IO_EXECUTOR, WORKER_MAX_CONCURRENCY,
+    agent_semaphore, shutdown_agent_executor,
+)
 from app.db.models import Finding, Killsweep, Review, Target, Task, TaskEvent
 from app.db.session import SessionLocal
 from app.events import bus
@@ -457,7 +460,11 @@ class TaskRunner:
             # 2. 派发前先回收：清理已完成 task + 抢救心跳超时的僵尸目标
             self._reap_workers()
             await self._reclaim_stale(session)
-            free = task.concurrency - len(self._active_workers)
+            # task.concurrency 是用户在 UI 配的期望并发；worker 实际并发还受全局信号量
+            # WORKER_MAX_CONCURRENCY 封顶。这里按两者取小来决定本轮 spawn 多少，避免多起
+            # 的协程只是白白阻塞在 worker_sem.acquire()（表现为"配了 N 并发但没那么多在跑"）。
+            effective_cap = min(task.concurrency, WORKER_MAX_CONCURRENCY)
+            free = effective_cap - len(self._active_workers)
             for _ in range(max(0, free)):
                 target = await self._pop_queued(session)
                 if not target:
@@ -469,11 +476,16 @@ class TaskRunner:
 
             # 4. idle 标记
             queued = await self._count(session, "queued")
-            if queued == 0 and not self._active_workers and task.status == "running":
+            # 除了 queued 和内存里的活跃 worker，还要看 DB 里有没有 assigned/scanning 的
+            # 在途目标：幽灵 scanning(协程已死但状态没回收)期间不能误判 idle，否则前端显示
+            # 空闲、实际还有目标虚挂，直到 reclaim(最多 ~150s)才回收——保持 running 更真实。
+            inflight = await self._count_inflight(session)
+            busy = bool(self._active_workers) or inflight > 0
+            if queued == 0 and not busy and task.status == "running":
                 if task.status != "idle":
                     task.status = "idle"
                     await session.commit()
-            elif task.status == "idle" and (queued or self._active_workers):
+            elif task.status == "idle" and (queued or busy):
                 task.status = "running"
                 await session.commit()
 
@@ -482,6 +494,16 @@ class TaskRunner:
         return (await session.execute(
             select(func.count()).select_from(Target).where(
                 Target.task_id == self.task_id, Target.status == status)
+        )).scalar() or 0
+
+    async def _count_inflight(self, session: AsyncSession) -> int:
+        """在途目标数：assigned(已 pop 待起协程) + scanning(挖掘中/幽灵未回收)。
+        用于 idle 判定，避免有目标虚挂时把任务误标为空闲。"""
+        from sqlalchemy import func
+        return (await session.execute(
+            select(func.count()).select_from(Target).where(
+                Target.task_id == self.task_id,
+                Target.status.in_(("assigned", "scanning")))
         )).scalar() or 0
 
     async def _pop_queued(self, session: AsyncSession) -> Target | None:
@@ -1515,6 +1537,10 @@ class TaskRunner:
                 worker.executor.kill_processes()
 
         cancelled = False
+        # 区分「超时」与「外部取消(pause/stop/reclaim)」：两者都会 set cancel_event(通知
+        # 还在跑的 worker 线程停手)，但超时应当走正常 persist 落 timeout verdict(触发重试/dead
+        # 状态机)，而外部取消才丢弃结果由回队逻辑接管。用独立标志把两者分开。
+        is_timeout = False
         result: dict | None = None
         # 并发信号量：worker 实际并发由此封顶，保证不会占满 AGENT_EXECUTOR 把
         # reviewer/killsweep/assistant 饿死。信号量在 future 真正结束(含超时后线程
@@ -1564,6 +1590,7 @@ class TaskRunner:
                 target_id[:8], WORKER_IDLE_TIMEOUT, WORKER_MAX_WALL_TIMEOUT, timeout_reason,
             )
             cancel_event.set()
+            is_timeout = True
             worker = worker_holder.get("worker")
             if worker:
                 worker.executor.cancel_running()
@@ -1598,7 +1625,13 @@ class TaskRunner:
         self._live.pop(target_id, None)
         self._worker_last_activity.pop(target_id, None)
         self._worker_cancel_events.pop(target_id, None)
-        if cancelled or cancel_event.is_set() or target_id in self._cancelled_targets:
+        # 丢弃仅针对「外部取消」(pause/stop/reclaim)：这些路径已由回队逻辑接管目标状态。
+        # 超时(is_timeout)虽然也 set 了 cancel_event，但要正常走 persist 落 timeout verdict，
+        # 触发 _persist_worker_result 里的 timeout 重试/dead 分支，而不是被丢弃后靠 reclaim 兜底。
+        externally_cancelled = cancelled or target_id in self._cancelled_targets or (
+            cancel_event.is_set() and not is_timeout
+        )
+        if externally_cancelled:
             # 诊断：worker 结果被丢弃的真实原因（定位"挖了没落库"的关键路径）。
             n_find = len((result or {}).get("findings") or [])
             logger.warning(
@@ -2205,6 +2238,7 @@ class TaskRunner:
                 poc=f.poc, raw_request=f.raw_request, raw_response=f.raw_response,
                 evidence=f.evidence or {}, affected_scope=f.affected_scope,
                 kill_chain=f.kill_chain or [], self_check=f.self_check or {},
+                owner=f.owner or "",
             )
             llm = _llm_for_task(task_obj)
 
@@ -2220,7 +2254,12 @@ class TaskRunner:
 
         review_sem = agent_semaphore("review")
         await review_sem.acquire()
-        review_future = loop.run_in_executor(AGENT_EXECUTOR, do_review)
+        try:
+            review_future = loop.run_in_executor(AGENT_EXECUTOR, do_review)
+        except BaseException:
+            # submit 本身抛错(如池已关闭)——立即归还信号量，否则并发位永久丢失。
+            review_sem.release()
+            raise
 
         def _release_review(fut: asyncio.Future) -> None:
             review_sem.release()
@@ -2385,7 +2424,11 @@ class TaskRunner:
 
         killsweep_sem = agent_semaphore("killsweep")
         await killsweep_sem.acquire()
-        hunt_future = loop.run_in_executor(AGENT_EXECUTOR, do_hunt)
+        try:
+            hunt_future = loop.run_in_executor(AGENT_EXECUTOR, do_hunt)
+        except BaseException:
+            killsweep_sem.release()
+            raise
 
         def _release_killsweep(fut: asyncio.Future) -> None:
             killsweep_sem.release()
@@ -2569,7 +2612,11 @@ class TaskRunner:
 
         escalate_sem = agent_semaphore("escalation")
         await escalate_sem.acquire()
-        hunt_future = loop.run_in_executor(AGENT_EXECUTOR, do_hunt)
+        try:
+            hunt_future = loop.run_in_executor(AGENT_EXECUTOR, do_hunt)
+        except BaseException:
+            escalate_sem.release()
+            raise
 
         def _release_escalation(fut: asyncio.Future) -> None:
             escalate_sem.release()

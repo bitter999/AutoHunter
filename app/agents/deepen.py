@@ -43,6 +43,11 @@ def apply_deepen(session, finding: Finding, tgt: Target | None, directive: str,
     tgt.status = "queued"
     tgt.assigned_worker = ""
     tgt.retry_count = 0
+    # 回队前清掉上一轮的终态残留：done 目标带的旧 verdict=found、心跳、dead_reason
+    # 都要归零，否则会污染派发/统计（如被当成已完成或死目标）。
+    tgt.verdict = ""
+    tgt.heartbeat_at = None
+    tgt.dead_reason = ""
     tgt.priority_score = (tgt.priority_score or 0) + 100.0
     tag = "人工深挖" if source == "user" else "深挖"
     tgt.priority_reason = f"[{tag}#{tgt.deepen_count}] {directive[:80]}"
