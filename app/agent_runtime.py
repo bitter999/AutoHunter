@@ -26,12 +26,70 @@ def _int_env(name: str, default: int) -> int:
         return default
 
 
-# 各类 agent 的并发上限（asyncio 信号量层封顶，互不饿死）
-WORKER_MAX_CONCURRENCY = _int_env("AUTOHUNTER_WORKER_MAX_CONCURRENCY", 8)
-REVIEW_MAX_CONCURRENCY = _int_env("AUTOHUNTER_REVIEW_MAX_CONCURRENCY", 4)
-KILLSWEEP_MAX_CONCURRENCY = _int_env("AUTOHUNTER_KILLSWEEP_MAX_CONCURRENCY", 3)
-ESCALATION_MAX_CONCURRENCY = _int_env("AUTOHUNTER_ESCALATION_MAX_CONCURRENCY", 2)
-ASSISTANT_MAX_CONCURRENCY = _int_env("AUTOHUNTER_ASSISTANT_MAX_CONCURRENCY", 3)
+def _detect_cpus() -> int:
+    """探测可用 CPU 数：优先 sched_getaffinity（尊重 cgroup/容器绑核），退回 cpu_count。"""
+    try:
+        return max(1, len(os.sched_getaffinity(0)))  # type: ignore[attr-defined]
+    except (AttributeError, OSError):
+        return max(1, os.cpu_count() or 1)
+
+
+def _detect_mem_gib() -> float:
+    """探测物理内存(GiB)。取不到时返回 0（表示未知，不参与限制）。"""
+    try:
+        pages = os.sysconf("SC_PHYS_PAGES")  # type: ignore[attr-defined]
+        page_size = os.sysconf("SC_PAGE_SIZE")  # type: ignore[attr-defined]
+        return (pages * page_size) / (1024 ** 3)
+    except (AttributeError, ValueError, OSError):
+        return 0.0
+
+
+def _auto_worker_base() -> int:
+    """按机器规格自动挑 worker 并发基准（其余 agent 按固定比例从它推导）。
+
+    agent 工作是 IO 密集（大部分时间阻塞等 LLM 响应），不是 CPU 密集，所以：
+    - 不按 CPU 线性缩放（28 核不代表要开 28 worker）；
+    - 真正的天花板是 LLM 上游限流，故 worker 封顶 12——再高只会撞 429；
+    - 小机器则按 CPU / 内存里更紧的那个降档，避免内存和上下文切换吃紧。
+
+    可用 AUTOHUNTER_WORKER_MAX_CONCURRENCY 显式覆盖（覆盖优先，跳过自动档）。
+    """
+    cpus = _detect_cpus()
+    mem = _detect_mem_gib()
+    # CPU 档：worker 是 IO 密集（大部分时间阻塞等 LLM），2 核也能并发好几个，
+    # 所以 CPU 少也不压太狠，保证小云服务器有基本吞吐。
+    if cpus <= 2:
+        by_cpu = 4
+    elif cpus <= 4:
+        by_cpu = 6
+    elif cpus <= 8:
+        by_cpu = 8
+    elif cpus <= 16:
+        by_cpu = 10
+    else:
+        by_cpu = 12
+    # 内存档（每个 worker 峰值主要是 LLM 上下文，粗估 ~0.8GiB 预算；0=未知则不限）。
+    if mem <= 0:
+        by_mem = by_cpu
+    else:
+        by_mem = max(4, int(mem // 0.8))
+    # 绝对下限 4：再小的机器也别把并发压到个位数以下，否则小云服务器几乎跑不动。
+    return max(4, min(by_cpu, by_mem, 12))
+
+
+# worker 基准：env 显式给了就用 env，否则按机器规格自动定档。
+_WORKER_ENV = os.environ.get("AUTOHUNTER_WORKER_MAX_CONCURRENCY")
+_WORKER_BASE = _int_env("AUTOHUNTER_WORKER_MAX_CONCURRENCY", _auto_worker_base()) \
+    if _WORKER_ENV else _auto_worker_base()
+
+# 各类 agent 并发上限：worker 为主，其余按固定比例从 worker 基准推导，
+# 保持 worker:review:killsweep:escalation:assistant ≈ 12:4:3:2:3 的成熟配比。
+# 每一项仍可用对应 env 单独覆盖（覆盖优先）。
+WORKER_MAX_CONCURRENCY = _WORKER_BASE
+REVIEW_MAX_CONCURRENCY = _int_env("AUTOHUNTER_REVIEW_MAX_CONCURRENCY", max(2, _WORKER_BASE // 3))
+KILLSWEEP_MAX_CONCURRENCY = _int_env("AUTOHUNTER_KILLSWEEP_MAX_CONCURRENCY", max(2, _WORKER_BASE // 4))
+ESCALATION_MAX_CONCURRENCY = _int_env("AUTOHUNTER_ESCALATION_MAX_CONCURRENCY", max(1, _WORKER_BASE // 6))
+ASSISTANT_MAX_CONCURRENCY = _int_env("AUTOHUNTER_ASSISTANT_MAX_CONCURRENCY", max(2, _WORKER_BASE // 4))
 
 # 线程池容量：默认 = 各类上限之和 + 余量，保证不会因容量不足而排队死锁。
 # 允许用 AUTOHUNTER_AGENT_THREAD_POOL_SIZE 覆盖，但不得小于各类上限之和。
@@ -42,9 +100,11 @@ _SUM_LIMITS = (
     + ESCALATION_MAX_CONCURRENCY
     + ASSISTANT_MAX_CONCURRENCY
 )
+# 余量：为偶发的临时提交（如少量并发的 report assistant）留 4 个缓冲，仍可 env 覆盖，
+# 但无论如何不会小于 _SUM_LIMITS（否则触发历史 futex_wait 死锁）。
 AGENT_THREAD_POOL_SIZE = max(
     _SUM_LIMITS,
-    _int_env("AUTOHUNTER_AGENT_THREAD_POOL_SIZE", _SUM_LIMITS),
+    _int_env("AUTOHUNTER_AGENT_THREAD_POOL_SIZE", _SUM_LIMITS + 4),
 )
 
 AGENT_EXECUTOR = ThreadPoolExecutor(
