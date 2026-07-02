@@ -85,6 +85,32 @@ def _is_thinking_tool_choice_error(err: LLMError) -> bool:
     return "thinking mode does not support this tool_choice" in (err.detail or str(err)).lower()
 
 
+def _is_forced_tool_choice_unsupported(err: LLMError) -> bool:
+    """强制指定函数的 tool_choice 不被上游模型/网关接受时的各种表现。
+
+    并非所有模型都支持 OpenAI 的 `tool_choice={"type":"function",...}`（强制调用指定函数）：
+    - DeepSeek thinking：明确报 "thinking mode does not support this tool_choice"；
+    - 部分代理网关(vveai/gpt.ge 等)的 GLM/Qwen/Gemini：直接返回 HTTP 400 + "API 调用参数有误"
+      (如 code=1210)，或提示 tool_choice/parameter invalid。
+    命中这些时中心降级为 auto 重试，避免 reviewer/collector 这类强制调用方在非 DeepSeek 模型上
+    直接失败（表现为审核异常 kind=unknown）。
+    """
+    text = (err.detail or str(err)).lower()
+    if "thinking mode does not support this tool_choice" in text:
+        return True
+    status = getattr(err, "status", None)
+    if str(status) == "400" or " 400 " in f" {text} ":
+        # 400 且看起来是参数/工具选择相关（含 tool_choice 关键词，或通用“参数有误”），
+        # 就当作 forced tool_choice 不兼容，降级重试一次。降级后若仍失败会走正常报错。
+        markers = (
+            "tool_choice", "tool choice", "function call",
+            "参数有误", "参数错误", "invalid parameter", "invalid_request",
+            "unsupported", "not support", "unrecognized", "unexpected",
+        )
+        return any(m in text for m in markers)
+    return False
+
+
 def _is_max_tokens_unsupported(err: LLMError) -> bool:
     text = (err.detail or str(err)).lower()
     return (
@@ -206,13 +232,14 @@ class LLMClient:
                     and not tool_choice_fallback_used
                     and _is_forced_tool_choice(active_tool_choice)
                     and isinstance(last_exc, LLMError)
-                    and _is_thinking_tool_choice_error(last_exc)
+                    and _is_forced_tool_choice_unsupported(last_exc)
                 ):
-                    # DeepSeek v4 thinking mode rejects forced function tool_choice, but
-                    # still supports tools with auto tool choice. Fall back centrally so
-                    # reviewer/collector/other forced-tool callers do not get stuck.
+                    # 不是所有模型/网关都支持强制指定函数的 tool_choice：DeepSeek thinking 明确拒绝，
+                    # 部分代理网关的 GLM/Qwen/Gemini 直接 400(如 code=1210 "API 调用参数有误")。
+                    # 这些模型仍支持 tools + auto，故中心降级为 auto 重试，让 reviewer/collector 等
+                    # 强制调用方在非 DeepSeek 模型上也能正常出结果，而不是 kind=unknown 直接失败。
                     logger.warning(
-                        "LLM forced tool_choice rejected by thinking mode; falling back to auto "
+                        "LLM forced tool_choice rejected (thinking/400); falling back to auto "
                         "(model=%s, detail=%s)",
                         self.config.model, last_exc.detail[:300],
                     )

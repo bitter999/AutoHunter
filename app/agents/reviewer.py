@@ -16,7 +16,7 @@ from typing import Any, Callable, Optional
 from pydantic import ValidationError
 
 from app.agents.prompts import normalize_src_type, reviewer_system_prompt
-from app.llm.client import LLMClient, LLMError
+from app.llm.client import LLMClient, LLMError, _is_forced_tool_choice_unsupported
 from app.schemas import Confidence, Finding, Review, ReviewVerdict, Severity
 from app.tools.executor import ToolExecutor
 from app.tools.schemas import REVIEWER_TOOL_SCHEMAS
@@ -177,13 +177,13 @@ def _maybe_deepen_ignored(finding: Finding, review: Review, src_type: str) -> bo
 
 
 def _is_thinking_tool_choice_error(err: LLMError) -> bool:
-    """DeepSeek v4 thinking mode rejects forced function tool_choice.
+    """强制指定 submit_review 的 tool_choice 不被模型/网关接受时的兜底判定。
 
-    The same model still supports tools with auto tool choice, so reviewer can
-    safely fall back to auto and keep validating that submit_review was called.
+    复用 client 层的宽判定：既覆盖 DeepSeek thinking 的明确报错，也覆盖部分代理网关
+    (GLM/Qwen/Gemini)对 forced tool_choice 直接返回 400(如 code=1210 "API 调用参数有误")
+    的情况——这些模型仍支持 tools+auto，故降级为 auto 重试，仍强制模型必须调用 submit_review。
     """
-    raw = f"{err} {getattr(err, 'original', '')}".lower()
-    return "thinking mode does not support this tool_choice" in raw
+    return _is_forced_tool_choice_unsupported(err)
 
 
 def _clip_text(text: str, limit: int) -> str:
