@@ -939,7 +939,7 @@ function parseEventTs(ts) {
         <i v-if="rejectedCount">{{ rejectedCount }}</i>
       </button>
       <button type="button" role="tab" :aria-selected="tab === 'archived'" :class="{ active: tab === 'archived' }" @click="tab = 'archived'">
-        <span class="tab-long">AI 未采纳</span><span class="tab-short">未采纳</span>
+        <span class="tab-long">AI 未采纳</span><span class="tab-short">AI 未采纳</span>
         <i v-if="archivedCount">{{ archivedCount }}</i>
       </button>
     </div>

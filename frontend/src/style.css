@@ -200,7 +200,9 @@ a:hover { text-decoration: underline; }
 .nav-icon {
   font-size: 12px; line-height: 1; opacity: .75;
   font-family: "IBM Plex Mono", monospace;
+  display: inline-flex; align-items: center; justify-content: center;
 }
+.nav-icon svg { display: block; }
 .tool-icon { font-size: 13px; line-height: 1; display: inline-flex; align-items: center; }
 .tool-icon svg { display: block; }
 .tool-label { font-size: 12.5px; font-weight: 600; }
@@ -555,7 +557,10 @@ main {
     font-size: 18px;
     line-height: 1;
     font-family: "IBM Plex Mono", monospace;
+    display: inline-flex; align-items: center; justify-content: center;
+    height: 22px;
   }
+  .bottom-nav-icon svg { display: block; }
   .bottom-nav-label {
     font-size: 11px;
     font-weight: 600;
@@ -596,6 +601,11 @@ main {
   /* 固定 2 行高度：无论 query 实际 1 行还是 2 行，卡片高度都恒定，
      这样每张真实卡片彼此等高、也能和骨架精确对齐，消除加载抖动。 */
   min-height: 2.8em;
+  /* query 常是无空格长串(FOFA 语句/URL)，必须允许断行并收缩，
+     否则 -webkit-box 会以最长不可断片段为最小宽度，撑破卡片导致整页横向滚动。 */
+  min-width: 0;
+  overflow-wrap: anywhere;
+  word-break: break-all;
 }
 .task-card-side {
   display: flex; flex-direction: column; align-items: flex-end;
@@ -1723,6 +1733,19 @@ main {
     border-radius: 14px;
     -webkit-tap-highlight-color: transparent;
   }
+  /* 手机端主页任务标题：单行显示，超出省略号，避免长标题溢出屏幕/换行撑高卡片。
+     关键：整条 flex 链(main → tc-title → b)都要 min-width:0 才能真正收缩截断。 */
+  .task-card { min-width: 0; }
+  .task-card-main { min-width: 0; flex: 1 1 auto; overflow: hidden; }
+  .task-card .tc-title { min-width: 0; max-width: 100%; }
+  .task-card .tc-title b {
+    min-width: 0; flex: 1 1 auto;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  /* 右侧栏限宽，避免时间戳/按钮把左侧标题挤到溢出屏幕 */
+  .task-card-side { max-width: 42%; }
+  /* 手机端「全局情报库」按钮不显示左侧脉冲蓝点 */
+  .intel-entry .ie-dot { display: none; }
   .task-card:active { transform: scale(0.985); background: var(--surface-2); }
   .task-card-side { padding-top: 2px; justify-content: flex-start; }
   .mini-action {
