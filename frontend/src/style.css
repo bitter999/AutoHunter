@@ -407,7 +407,6 @@ main {
 .skeleton-card,
 .skeleton-worker,
 .skeleton-line,
-.skeleton-task,
 .skeleton-hard {
   position: relative; overflow: hidden;
   background: color-mix(in oklch, var(--surface-2) 82%, var(--bg));
@@ -418,8 +417,8 @@ main {
 .skeleton-card::after,
 .skeleton-worker::after,
 .skeleton-line::after,
-.skeleton-task::after,
-.skeleton-hard::after {
+.skeleton-hard::after,
+.sk-bar::after {
   content: "";
   position: absolute; inset: 0;
   background: transparent;
@@ -441,7 +440,27 @@ main {
 .skeleton-line { height: 14px; border-radius: 7px; margin-bottom: 8px; }
 .skeleton-line:nth-child(odd) { width: 92%; }
 .skeleton-line:nth-child(even) { width: 78%; }
-.skeleton-task { min-height: 92px; border-radius: var(--radius); margin-bottom: 10px; }
+/* 骨架任务卡：完全复用 .task-card 的盒模型（padding/border/radius/flex 布局），
+   内部用 .sk-bar 占位条镜像真实文字行，保证加载前后高度一致、不抖动。仅去掉交互。 */
+.skeleton-task { cursor: default; pointer-events: none; margin-bottom: 10px; }
+.skeleton-task:hover { border-color: var(--border); background: var(--surface); }
+.sk-bar {
+  position: relative; overflow: hidden; display: inline-block;
+  border-radius: 6px;
+  background: color-mix(in oklch, var(--surface-2) 82%, var(--bg));
+}
+/* 尺寸对齐真实内容：标题 14.5px/行、meta 6px 间距、query 2 行 line-clamp。 */
+.sk-title { width: 46%; height: 15px; border-radius: 7px; }
+.sk-badge { width: 52px; height: 18px; border-radius: 999px; }
+.sk-meta { width: 40%; height: 13px; }
+/* 骨架 query 占位：撑满 2 行(与真实 .task-query min-height 对齐)，两条模拟两行文字。 */
+.sk-query-wrap {
+  display: flex; flex-direction: column; justify-content: center; gap: 5px;
+}
+.sk-query { width: 88%; height: 12px; }
+.sk-query.short { width: 62%; }
+.sk-time { width: 118px; height: 13px; }
+.sk-action { width: 62px; height: 30px; border-radius: var(--radius-sm); }
 .skeleton-hard { min-height: 84px; border-radius: 13px; margin-bottom: 9px; }
 .skeleton-line.sm-head { width: 42%; height: 18px; margin-bottom: 12px; }
 .skeleton-board { margin-top: 0; }
@@ -480,7 +499,6 @@ main {
   }
   .skeleton-board .skeleton-panel { padding: 12px; border-radius: 14px; }
   .skeleton-worker { height: 82px; margin-bottom: 8px; }
-  .skeleton-task { min-height: 88px; border-radius: 14px; }
   .skeleton-hard { min-height: 78px; border-radius: 13px; }
 }
 
@@ -575,6 +593,9 @@ main {
   -webkit-box-orient: vertical;
   overflow: hidden;
   line-height: 1.4;
+  /* 固定 2 行高度：无论 query 实际 1 行还是 2 行，卡片高度都恒定，
+     这样每张真实卡片彼此等高、也能和骨架精确对齐，消除加载抖动。 */
+  min-height: 2.8em;
 }
 .task-card-side {
   display: flex; flex-direction: column; align-items: flex-end;
@@ -1297,6 +1318,17 @@ main {
 .result-row.submitted { opacity: .5; }
 .result-row.rejected { opacity: .62; }
 .result-row.rejected:hover { opacity: 1; }
+/* AI 未采纳归档：默认淡出弱化存在感，悬浮时恢复，暗示「沉淀区、需要时才翻」 */
+.result-row.archived { opacity: .68; }
+.result-row.archived:hover { opacity: 1; }
+.rr-side { display: flex; flex-direction: column; align-items: flex-end; gap: 6px; flex: none; }
+/* 归档原因标：ignored=疑似误杀用告警色，deepen=深挖未升级用中性信息色 */
+.arch-tag {
+  display: inline-block; font-size: 10.5px; font-weight: 700; line-height: 1;
+  padding: 3px 7px; border-radius: 6px; margin-right: 6px; vertical-align: 1px;
+}
+.arch-tag.ignored { background: var(--warn-bg); color: var(--warn); }
+.arch-tag.deepen { background: var(--info-bg); color: var(--info); }
 .rr-note { color: var(--danger); margin-top: 3px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .review-bar .rb-hint { font-size: 12.5px; color: var(--muted); }
 .rr-main { flex: 1; min-width: 0; }
@@ -1659,6 +1691,13 @@ main {
   .topbar-tools { gap: 6px; }
   .token-switch,
   .theme-toggle { display: none; }
+  /* 手机端令牌/主题已隐藏，仅留 GitHub 入口：放大到触控友好尺寸、
+     弱化描边使其在顶栏单独出现时轻盈自然，保留点击/悬浮旋转动效。 */
+  .github-link {
+    width: 40px; height: 40px;
+    border-color: var(--border-soft);
+  }
+  .github-link:active { transform: rotate(360deg); }
   .readonly-badge {
     padding: 4px 8px; font-size: 10px;
     max-width: 52px; text-align: center; line-height: 1.2;
