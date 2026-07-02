@@ -1232,15 +1232,21 @@ class TaskRunner:
                 break
             path = str(spec.get("path") or "").strip()
             follow_url = urljoin(base_url.rstrip("/") + "/", path.lstrip("/")) if path else base_url
-            session.add(Target(
-                task_id=task_id,
-                url=follow_url or base_url,
-                host=tgt.host,
-                source=source,
-                status="queued",
-                priority_score=float(spec.get("priority") or site_collab.FOCUSED_ROUTE.priority),
-                priority_reason=reason,
-            ))
+            try:
+                async with session.begin_nested():
+                    session.add(Target(
+                        task_id=task_id,
+                        url=follow_url or base_url,
+                        host=tgt.host,
+                        source=source,
+                        status="queued",
+                        priority_score=float(spec.get("priority") or site_collab.FOCUSED_ROUTE.priority),
+                        priority_reason=reason,
+                    ))
+            except IntegrityError:
+                # 并发：两条 discovery worker 同时派生撞了同一 site_f 编号，跳过，
+                # 不让唯一索引冲突在外层 commit 时炸掉整次 persist。
+                continue
             reason_pool.add(reason)
             added += 1
         return added
@@ -1934,10 +1940,15 @@ class TaskRunner:
                         },
                     ))
 
-            # 单站协作：discovery 侦察路线完成 → 自动派发 5 条主题深挖路线（先侦察后分工）。
-            # 仅在侦察路线真正跑完（非配额停机/临时 LLM 错误回队）时派发，否则主题路线拿不到
-            # 侦察成果会退化成泛扫；这两类错误下 discovery 会回队重挖，等它真跑完再派。
-            if not quota_llm_error and not transient_llm_error:
+            # 单站协作：discovery 侦察路线正常跑完 → 自动派发 5 条主题深挖路线（先侦察后分工）。
+            # 只在 discovery 真正产出侦察结论(no_vuln/found)且没有待深挖 lead 时派：
+            #   - 配额/临时 LLM 错误、worker 崩溃(error)、超时 → discovery 会回队重挖或转 dead，
+            #     此时侦察成果不完整，派主题只会退化成泛扫，等 discovery 真跑完再派；
+            #   - discovery 自己还带 actionable deepen_lead(要回火深挖) → 先让它把侦察这条线打透，
+            #     避免主题路线与 discovery 深挖并行、抢在侦察收尾前泛扫。
+            _theme_deepen_lead = (result.get("deepen_lead") or "").strip()
+            _discovery_ok = (verdict == Verdict.no_vuln.value or verdict == Verdict.found.value or findings)
+            if _discovery_ok and not _is_actionable_worker_deepen_lead(_theme_deepen_lead):
                 theme_spawned = await self._spawn_site_theme_routes(session, task_id, tgt)
                 if theme_spawned:
                     session.add(TaskEvent(
