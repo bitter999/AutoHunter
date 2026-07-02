@@ -137,7 +137,26 @@ watch(authReadyRef, (ready) => {
       </div>
     </header>
     <div v-if="initialLoading" class="task-list">
-      <div v-for="n in 4" :key="n" class="task-card skeleton-task"></div>
+      <div v-for="n in 4" :key="n" class="task-card skeleton-task" aria-hidden="true">
+        <div class="task-card-main">
+          <div class="tc-title"><span class="sk-bar sk-title"></span></div>
+          <div class="task-card-meta">
+            <span class="sk-bar sk-badge"></span>
+            <span class="sk-bar sk-meta"></span>
+          </div>
+          <div class="task-query sk-query-wrap">
+            <span class="sk-bar sk-query"></span>
+            <span class="sk-bar sk-query short"></span>
+          </div>
+        </div>
+        <div class="task-card-side">
+          <span class="sk-bar sk-time"></span>
+          <div class="task-actions">
+            <span class="sk-bar sk-action"></span>
+            <span class="sk-bar sk-action"></span>
+          </div>
+        </div>
+      </div>
     </div>
     <div v-else-if="!tasks.length" class="empty">
       还没有任务
