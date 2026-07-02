@@ -93,7 +93,15 @@ onUnmounted(() => {
         <span v-else-if="authRoleRef === 'readonly'" class="readonly-badge">只读</span>
         <span v-else-if="authRoleRef === 'observer'" class="readonly-badge">观摩</span>
         <button class="token-switch" @click="changeToken" aria-label="更换访问令牌">
-          <span class="tool-icon">🔑</span>
+          <span class="tool-icon">
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor"
+              stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <circle cx="7.5" cy="15.5" r="4.5"/>
+              <path d="M10.7 12.3 21 2"/>
+              <path d="m16 6 3 3"/>
+              <path d="m18 4 3 3"/>
+            </svg>
+          </span>
           <span class="tool-label">令牌</span>
         </button>
         <button class="theme-toggle" @click="toggleTheme"
