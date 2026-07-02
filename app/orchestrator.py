@@ -1935,21 +1935,24 @@ class TaskRunner:
                     ))
 
             # 单站协作：discovery 侦察路线完成 → 自动派发 5 条主题深挖路线（先侦察后分工）。
-            theme_spawned = await self._spawn_site_theme_routes(session, task_id, tgt)
-            if theme_spawned:
-                session.add(TaskEvent(
-                    task_id=task_id,
-                    agent="orchestrator",
-                    kind="site_theme_routes_spawned",
-                    level="info",
-                    message=f"单站协作侦察完成（{tgt.source}），已派发 {theme_spawned} 条主题深挖路线",
-                    payload={
-                        "target_id": target_id,
-                        "host": dedup.normalize_host(tgt.url or tgt.host),
-                        "source": tgt.source,
-                        "spawned": theme_spawned,
-                    },
-                ))
+            # 仅在侦察路线真正跑完（非配额停机/临时 LLM 错误回队）时派发，否则主题路线拿不到
+            # 侦察成果会退化成泛扫；这两类错误下 discovery 会回队重挖，等它真跑完再派。
+            if not quota_llm_error and not transient_llm_error:
+                theme_spawned = await self._spawn_site_theme_routes(session, task_id, tgt)
+                if theme_spawned:
+                    session.add(TaskEvent(
+                        task_id=task_id,
+                        agent="orchestrator",
+                        kind="site_theme_routes_spawned",
+                        level="info",
+                        message=f"单站协作侦察完成（{tgt.source}），已派发 {theme_spawned} 条主题深挖路线",
+                        payload={
+                            "target_id": target_id,
+                            "host": dedup.normalize_host(tgt.url or tgt.host),
+                            "source": tgt.source,
+                            "spawned": theme_spawned,
+                        },
+                    ))
 
             if quota_llm_error:
                 tgt.verdict = ""
