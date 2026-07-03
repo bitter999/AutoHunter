@@ -1980,6 +1980,47 @@ main {
   }
   .mission-progress { order: 3; margin-top: 12px; }
 
+  /* 单站协作态势：手机端收紧 padding、标题与汇总分行、流水线纵向紧凑 */
+  .collab-panel {
+    padding: 13px 13px 14px;
+    border-radius: 16px;
+    margin-bottom: 12px;
+  }
+  .collab-head {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 10px;
+    margin-bottom: 13px;
+  }
+  .collab-title { gap: 7px 8px; }
+  .collab-title small { flex: 1 1 100%; font-size: 11.5px; line-height: 1.45; }
+  /* 汇总数字独占一行，等分成条，扫一眼即可 */
+  .collab-summary {
+    gap: 8px;
+    padding-top: 10px;
+    border-top: 1px solid var(--border-soft);
+  }
+  .collab-summary span {
+    flex: 1;
+    justify-content: center;
+    gap: 6px;
+    padding: 7px 4px;
+    border-radius: 10px;
+    background: var(--bg);
+    border: 1px solid var(--border-soft);
+    font-size: 11px;
+  }
+  .collab-summary i { font-size: 16px; }
+  /* 阶段：纵向堆叠，用竖直 rail 串起来（连接线延伸到下一阶段） */
+  .collab-flow { gap: 4px; }
+  .collab-phase { padding-right: 0; padding-bottom: 4px; }
+  .collab-phase:last-child { padding-bottom: 0; }
+  .phase-body { padding-bottom: 8px; }
+  .phase-desc { font-size: 11px; margin-bottom: 8px; }
+  .phase-routes { gap: 5px; }
+  .route-chip { padding: 8px 10px; font-size: 12px; min-height: 38px; }
+  .route-status-dot { width: 8px; height: 8px; }
+
   /* KPI：横向滑动卡片带，保留扫一眼能力 */
   .metric-grid {
     display: flex;
