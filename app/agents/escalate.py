@@ -21,7 +21,8 @@ from app.tools.executor import ToolExecutor
 from app.tools.schemas import ESCALATE_TOOL_SCHEMAS
 
 # 扩大危害只在已确认据点上做纵向升级，必须有限轮数：打不动就撤，不恋战。
-_MAX_ROUNDS = int(os.environ.get("ESCALATE_MAX_ROUNDS", "6"))
+# 10 轮：给"伪造凭证→登入→翻数据/找写操作"这类多步升级留足空间，又不至于无限恋战。
+_MAX_ROUNDS = int(os.environ.get("ESCALATE_MAX_ROUNDS", "10"))
 
 
 class EscalateResult:
@@ -70,7 +71,9 @@ class EscalateHunter:
             f"- 原始请求(片段)：{(f.get('raw_request') or '')[:600]}\n"
             f"- 原始响应(片段)：{(f.get('raw_response') or '')[:900]}\n\n"
             f"请在这个已确认据点上继续往下打，把危害做大。"
-            f"只有显著升级（等级提升 或 影响面数量级变化）才 submit_escalation，否则 abandon_escalation。"
+            f"打出任何原洞没证明、而你新证明出来的实锤危害（等级提升 / 影响面数量级 / 或在原洞基础上"
+            f"实际拿到敏感数据·写操作·账号接管等新实质危害）就 submit_escalation；只有纯原地打转、"
+            f"和原洞完全等价时才 abandon_escalation。"
         )
 
     def run(self) -> EscalateResult:
