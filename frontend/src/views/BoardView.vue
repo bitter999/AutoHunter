@@ -678,9 +678,11 @@ const progressPct = computed(() =>
   totalTargets.value ? Math.round((resolvedTargets.value / totalTargets.value) * 100) : 0
 );
 const collectorCfg = computed(() => task.value?.fofa_config || {});
-const collectorVisible = computed(() =>
-  !!(collectorCfg.value.collector_phase || collectorCfg.value.collector_phase_text)
-);
+const collectorVisible = computed(() => {
+  // 过滤/入队完成后（phase=dispatch）自动隐藏，不再占位。
+  if (collectorCfg.value.collector_phase === "dispatch") return false;
+  return !!(collectorCfg.value.collector_phase || collectorCfg.value.collector_phase_text);
+});
 const collectorText = computed(() =>
   collectorCfg.value.collector_phase_text || phaseLabel(collectorCfg.value.collector_phase) || "正在跑过滤器阶段"
 );
