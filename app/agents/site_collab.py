@@ -155,6 +155,47 @@ def route_reason(route: SiteRoute) -> str:
     return f"[单站协作] {route.label} · {route.focus[:120]}"
 
 
+# 用户在自由文本里给出的登录凭据/登录态的识别特征。
+# 命中任一即认为用户「提供了可登录的凭据」，触发登录后深入引导。
+_CRED_SIGNALS: tuple[re.Pattern, ...] = (
+    re.compile(r"(?i)(账号|帐号|账户|用户名|登录名|user(?:name)?|account|login)\s*[:：=]\s*\S+"),
+    re.compile(r"(?i)(密码|口令|passwd|password|pwd|pass)\s*[:：=]\s*\S+"),
+    re.compile(r"(?i)\bcookie\s*[:：]\s*\S+"),
+    re.compile(r"(?i)\bauthorization\s*[:：]\s*\S+"),
+    re.compile(r"(?i)\bbearer\s+[A-Za-z0-9._\-]{10,}"),
+    re.compile(r"(?i)\b(JSESSIONID|PHPSESSID|SESSION|SESSID|sid|token|access_token)\s*=\s*\S+"),
+    re.compile(r"(?i)(已有|提供|给你|附上|如下).{0,6}(账号|帐号|账户|登录|凭据|凭证|cookie|token|session)"),
+)
+
+
+def detect_user_credentials(site_info: str) -> bool:
+    """判断用户自由文本里是否给出了可登录的账号密码 / 登录态。
+
+    命中即触发 render_context 里的「登录后深入」引导块。宁可宽松命中——
+    误判成本只是多一段引导文字，漏判成本是忽略用户凭据不去登录。
+    """
+    text = (site_info or "").strip()
+    if not text:
+        return False
+    return any(p.search(text) for p in _CRED_SIGNALS)
+
+
+# 用户给出凭据时的引导块：登录成功后进系统深入，只登录不算漏洞。
+_USER_CRED_DIRECTIVE = (
+    "# 用户已提供登录凭据 —— 登录并进系统深入\n"
+    "上方「用户提供的目标相关信息」里含用户主动给出的账号密码 / Cookie / Token / 登录态，"
+    "这是用户授权你使用的入场券，请执行：\n"
+    "1. 【先登录】用给出的账号密码走登录接口，或把给出的 Cookie/Authorization 用 session_set 登记；"
+    "登记后 http_request 会自动携带登录态，不必每次手动拼 Cookie。\n"
+    "2. 【判成败】登录成功的判据：拿到 Set-Cookie/有效 session、能访问到需登录才可见的页面/接口（非跳登录、非 401/403）。"
+    "登录本身不是漏洞，不能就此 finish。\n"
+    "3. 【进系统深入】带着登录态进入系统内部逐项验证：后台/个人中心/管理菜单，测越权(IDOR/水平垂直)、"
+    "他人对象访问、敏感数据读取、上传/导入、敏感写操作、配置暴露、受限 API；实证到够格危害才 submit_finding。\n"
+    "4. 【登不进/无货】登录失败就记录现象；登进去但无可深挖危害，用 deepen_lead 写清下一轮拿这登录态该测哪里再 finish。\n"
+    "只登录成功 / 只进个人中心 / 只写「可能可以访问 X」都不算漏洞，需要登录态下的实证危害。不要修改任何账号密码。\n"
+)
+
+
 def render_context(
     route: SiteRoute,
     site_info: str = "",
@@ -181,6 +222,8 @@ def render_context(
         ]
     if site_info.strip():
         lines += ["", "# 用户提供的目标相关信息", site_info.strip()[:2000]]
+        if detect_user_credentials(site_info):
+            lines += ["", _USER_CRED_DIRECTIVE]
     if coverage_block.strip():
         lines += ["", coverage_block.strip()]
     if focus_note.strip():

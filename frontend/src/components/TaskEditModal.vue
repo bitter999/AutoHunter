@@ -179,8 +179,8 @@ async function save() {
 
       <label>漏洞类型（逗号分隔） <input v-model="form.vuln_types" /></label>
       <label v-if="!isSiteMode">FOFA 语法 / 搜集意图 <input v-model="form.fofa_query" /></label>
-      <label v-else>目标相关信息 / 协作重点
-        <textarea v-model="form.fofa_query" rows="4"></textarea>
+      <label v-else>目标相关信息 / 协作重点 / 已有凭据
+        <textarea v-model="form.fofa_query" rows="4" placeholder="可写重点方向、后台位置，以及【已有的登录凭据】。给了凭据 Agent 会先前台测、再登录进系统内部深挖。&#10;例：后台在 /admin；已有账号 test / Test@123；或 Cookie: JSESSIONID=xxxx"></textarea>
       </label>
       <label>{{ isSiteMode ? "主目标 URL（每行一个，会自动拆成多条协作路线）" : "手动目标清单（每行一个）" }}
         <textarea v-model="form.manual_targets" rows="3"></textarea>

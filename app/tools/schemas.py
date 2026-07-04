@@ -10,7 +10,7 @@ TOOL_SCHEMAS = [
         "type": "function",
         "function": {
             "name": "http_request",
-            "description": "发一个 HTTP 请求并返回完整的请求包、响应包、状态码、响应头和响应体。挖洞取证的首选工具。",
+            "description": "发一个 HTTP 请求并返回完整的请求包、响应包、状态码、响应头和响应体。挖洞取证的首选工具。已用 session_set 登记登录态后，本工具会自动携带 Cookie/鉴权头、并自动吸收响应 Set-Cookie，登录后深挖无需每次手拼凭证。",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -274,12 +274,12 @@ JS_ANALYZER_TOOL_SCHEMAS = [
 ]
 
 
-ENTERPRISE_SESSION_TOOL_SCHEMAS = [
+SESSION_TOOL_SCHEMAS = [
     {
         "type": "function",
         "function": {
             "name": "session_set",
-            "description": "【企业专属】登记已拿到的登录态(cookie 或鉴权头如 Authorization: Bearer xxx)，登记后所有 http_request 自动携带，且自动吸收响应 Set-Cookie。突破入口拿到凭证后先固化登录态，再深挖受限接口/枚举越权对象。",
+            "description": "登记已拿到的登录态(cookie 或鉴权头如 Authorization: Bearer xxx)，登记后所有 http_request 自动携带、且自动吸收响应 Set-Cookie。登录成功后先用它固化登录态，再带着登录态深挖受限接口、后台功能、枚举越权对象——只登录成功不算洞。",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -582,7 +582,9 @@ def _compact_descriptions(value, limit: int = 72, _depth: int = 0):
 
 TOOL_SCHEMAS = _compact_descriptions(TOOL_SCHEMAS)
 JS_ANALYZER_TOOL_SCHEMAS = _compact_descriptions(JS_ANALYZER_TOOL_SCHEMAS)
-ENTERPRISE_SESSION_TOOL_SCHEMAS = _compact_descriptions(ENTERPRISE_SESSION_TOOL_SCHEMAS)
+SESSION_TOOL_SCHEMAS = _compact_descriptions(SESSION_TOOL_SCHEMAS)
+# 向后兼容别名（历史命名，全模式已可用）。
+ENTERPRISE_SESSION_TOOL_SCHEMAS = SESSION_TOOL_SCHEMAS
 REVIEWER_TOOL_SCHEMAS = _compact_descriptions(REVIEWER_TOOL_SCHEMAS)
 KILLSWEEP_TOOL_SCHEMAS = _compact_descriptions(KILLSWEEP_TOOL_SCHEMAS)
 ESCALATE_TOOL_SCHEMAS = _compact_descriptions(ESCALATE_TOOL_SCHEMAS)

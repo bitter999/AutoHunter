@@ -113,9 +113,10 @@ class ToolExecutor:
         self.work_dir.mkdir(parents=True, exist_ok=True)
         self._log_seq = 0
         self._active_procs: set[subprocess.Popen] = set()
-        # 企业专属会话态：worker 登录/拿到 token 后，自动携带到后续 http_request，
+        # 会话态：worker 登录/拿到 token 后自动携带到后续 http_request，
         # 解决"明明登进去了，深挖请求却忘带凭证导致越权失败"的断链问题。
-        # 仅企业模式启用（edu 走量不需要维持复杂会话）。
+        # 每个 target 独立 executor 实例、session jar 相互隔离，不会串号。
+        # 全模式启用（登录后同样必须带登录态深入）。
         self._session_cookies: dict[str, str] = {}
         self._session_headers: dict[str, str] = {}
 
@@ -283,7 +284,7 @@ class ToolExecutor:
         # 直接喂给 dict()/httpx 会抛 "dictionary update sequence element..." 崩掉整个 agent。
         # 这里统一规范化成 dict，容错所有 agent 的 http_request 调用。
         headers = _normalize_headers(headers)
-        # 企业 session：把已维持的 cookie/header 合并进本次请求（用户传的同名键优先）。
+        # 会话保持：把已维持的 cookie/header 合并进本次请求（用户传的同名键优先）。
         merged_headers, session_applied = self._apply_session(headers)
 
         req: httpx.Request | None = None
@@ -297,8 +298,8 @@ class ToolExecutor:
         except Exception as e:
             return {"ok": False, "error": f"HTTP 请求异常: {e}", "url": url}
 
-        # 企业 session：自动吸收响应 Set-Cookie，后续请求自动续上登录态。
-        session_updated = self._absorb_set_cookie(resp) if self.enterprise else []
+        # 自动吸收响应 Set-Cookie，后续请求自动续上登录态（全模式）。
+        session_updated = self._absorb_set_cookie(resp)
 
         # 原始请求行（取证/格式参考）。响应报文不再单独回传：状态码 + response_headers +
         # body 已结构化提供，raw_response 会与它们 100% 重复，是当轮就纯冗余的双份大文本。
@@ -321,14 +322,14 @@ class ToolExecutor:
             result["session_cookies_updated"] = session_updated
         return result
 
-    # ---- 企业 session 状态管理 ----
+    # ---- 会话状态管理（全模式）----
     def _apply_session(self, headers: Optional[dict[str, str]]) -> tuple[dict[str, str], list[str]]:
         """把维持的 session cookie/header 合并进请求头。返回 (合并后headers, 应用了哪些)。
 
         合并规则：用户本次显式传入的头优先（不被 session 覆盖），保证可手动覆写。
-        非企业模式直接原样返回，不启用 session。
+        会话为空时原样返回、零开销；全模式启用。
         """
-        if not self.enterprise:
+        if not self._session_cookies and not self._session_headers:
             return (dict(headers) if headers else {}), []
         try:
             merged: dict[str, str] = {}
@@ -370,11 +371,7 @@ class ToolExecutor:
         headers: Optional[dict[str, str]] = None,
         clear: bool = False,
     ) -> dict[str, Any]:
-        """worker 显式设置/查看会话态：手动登记拿到的 token/cookie，后续自动携带。"""
-        if not self.enterprise:
-            return {"ok": False, "blocked": True,
-                    "error": "session 状态管理仅企业模式可用。",
-                    "guidance": "edu 模式请在 http_request 的 headers 里手动带 Cookie/Authorization。"}
+        """worker 显式设置/查看会话态：手动登记拿到的 token/cookie，后续自动携带。全模式可用。"""
         try:
             if clear:
                 self._session_cookies.clear()

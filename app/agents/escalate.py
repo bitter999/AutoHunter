@@ -18,7 +18,10 @@ from app.agents.history import compact_messages
 from app.agents.prompts import escalate_system_prompt, is_enterprise_src
 from app.llm.client import LLMClient
 from app.tools.executor import ToolExecutor
-from app.tools.schemas import ESCALATE_TOOL_SCHEMAS
+from app.tools.schemas import ESCALATE_TOOL_SCHEMAS, SESSION_TOOL_SCHEMAS
+
+# 扩大危害阶段也开放会话保持：拿原洞凭证/新伪造凭证登录后固化登录态再深挖。
+_ESCALATE_TOOLS = ESCALATE_TOOL_SCHEMAS + SESSION_TOOL_SCHEMAS
 
 # 扩大危害只在已确认据点上做纵向升级，必须有限轮数：打不动就撤，不恋战。
 # 10 轮：给"伪造凭证→登入→翻数据/找写操作"这类多步升级留足空间，又不至于无限恋战。
@@ -90,7 +93,7 @@ class EscalateHunter:
             rounds += 1
             try:
                 send_messages = compact_messages(messages, rounds)
-                msg = self.llm.chat(send_messages, tools=ESCALATE_TOOL_SCHEMAS, tool_choice="auto")
+                msg = self.llm.chat(send_messages, tools=_ESCALATE_TOOLS, tool_choice="auto")
             except Exception as e:
                 self._emit("escalate_error", error=str(e))
                 return EscalateResult({"error": f"LLM 调用失败: {e}"})
@@ -149,6 +152,13 @@ class EscalateHunter:
                 return {"ok": False, "error": "run_shell 缺少 command"}
             self._emit("escalate_shell", command=str(args.get("command", ""))[:160])
             return self.executor.run_shell(command, timeout=args.get("timeout"))
+        if name == "session_set":
+            self._emit("escalate_session",
+                       has_cookies=bool(args.get("cookies")), has_headers=bool(args.get("headers")))
+            return self.executor.session_set(
+                cookies=args.get("cookies"), headers=args.get("headers"),
+                clear=bool(args.get("clear", False)),
+            )
         if name == "submit_escalation":
             self._result = {
                 "escalated": True,

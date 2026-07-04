@@ -22,8 +22,8 @@ from app.llm.client import LLMClient
 from app.schemas import Finding, Verdict, WorkerResult
 from app.tools.executor import ToolExecutor
 from app.tools.schemas import (
-    ENTERPRISE_SESSION_TOOL_SCHEMAS,
     JS_ANALYZER_TOOL_SCHEMAS,
+    SESSION_TOOL_SCHEMAS,
     TOOL_SCHEMAS,
 )
 
@@ -218,8 +218,8 @@ class Worker:
             try:
                 self._emit("llm_round_start", round=rounds)
                 tools = list(TOOL_SCHEMAS)
-                if self._enterprise:
-                    tools += ENTERPRISE_SESSION_TOOL_SCHEMAS
+                # 会话保持工具全模式开放：拿到凭证登录后固化登录态再深挖。
+                tools += SESSION_TOOL_SCHEMAS
                 if self._js_tool_enabled:
                     tools += JS_ANALYZER_TOOL_SCHEMAS
                 send_messages = compact_messages(messages, rounds)
