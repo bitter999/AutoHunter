@@ -430,10 +430,26 @@ async def _fofa_collect(
         err = f"{e}"[:300]
         cfg["last_fofa_error"] = err
         cfg["collector_phase"] = "fofa_error"
+        # 账号级致命错误（key 无效/过期/无 F 点/权限）连续累计，达阈值由上层暂停任务；
+        # 瞬时错误（网络/超时）重置计数，避免偶发抖动误触发暂停。
+        if getattr(e, "account_error", False):
+            cfg["fofa_auth_fail_count"] = int(cfg.get("fofa_auth_fail_count", 0)) + 1
+            await report(
+                "fofa_error",
+                f"FOFA 账号无效（第 {cfg['fofa_auth_fail_count']} 次）：{err}",
+                fofa_error=err, cursor=cursor, fofa_auth_fail=cfg["fofa_auth_fail_count"],
+            )
+        else:
+            cfg["fofa_auth_fail_count"] = 0
+            await report(
+                "fofa_error",
+                f"FOFA 检索失败，已跳过本轮（游标停留第 {cursor} 页，下轮重试）：{err}",
+                fofa_error=err, cursor=cursor,
+            )
         task.fofa_config = {**cfg}
-        await report("fofa_error", f"FOFA 检索失败，已跳过本轮（游标停留第 {cursor} 页，下轮重试）：{err}", fofa_error=err, cursor=cursor)
         return 0
     cursor = next_cursor
+    cfg["fofa_auth_fail_count"] = 0
     # 成功即清掉旧的错误标记，避免看板长期挂着一条早已恢复的 FOFA 报错。
     cfg.pop("last_fofa_error", None)
 

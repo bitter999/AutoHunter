@@ -109,6 +109,9 @@ KILLSWEEP_DEDUP_SCAN_LIMIT = int(os.environ.get("KILLSWEEP_DEDUP_SCAN_LIMIT", "2
 # 同一目标因临时 LLM 错误回队的最大次数（内存级，不耗 retry_count）。
 # 超过则置 dead 收敛，避免模型持续抽风时目标无限回队空转。
 MAX_TRANSIENT_LLM_REQUEUE = int(os.environ.get("MAX_TRANSIENT_LLM_REQUEUE", "5"))
+# FOFA 账号无效（key 失效/过期/无 F 点/权限）连续次数达到此阈值 → 自动暂停任务，
+# 避免持续空转刷无效请求。0 表示禁用该保护。
+FOFA_AUTH_FAIL_PAUSE_THRESHOLD = int(os.environ.get("FOFA_AUTH_FAIL_PAUSE_THRESHOLD", "3"))
 # 「无活跃协程的幽灵目标」回收短宽限（秒）。
 # 这类目标在 DB 里是 scanning/assigned，但 _active_workers 里没有对应协程——
 # 说明协程已不存在（进程重启残留 / 协程异常死亡 / 控制面清理后状态没归位）。
@@ -440,6 +443,19 @@ class TaskRunner:
                 )
 
             added = await collector.refill(session, task, LOW_WATERMARK, progress_cb=collector_progress)
+
+            # FOFA 账号连续无效达阈值 → 自动暂停任务，不再空转刷无效请求。
+            fofa_fail = int((task.fofa_config or {}).get("fofa_auth_fail_count", 0))
+            if FOFA_AUTH_FAIL_PAUSE_THRESHOLD and fofa_fail >= FOFA_AUTH_FAIL_PAUSE_THRESHOLD:
+                last_err = (task.fofa_config or {}).get("last_fofa_error", "")
+                reason = f"FOFA 账号连续 {fofa_fail} 次无效，已自动暂停任务，请检查/更换 FOFA key 后重新启动"
+                task.status = "paused"
+                await session.commit()
+                await self._log(session, "orchestrator", "auto_paused", f"{reason}（最后错误：{last_err}）",
+                                fofa_auth_fail=fofa_fail, fofa_error=last_err)
+                await self.pause(reason)
+                return
+
             if added:
                 fc = task.fofa_config or {}
                 cur_q = fc.get("current_query", "")

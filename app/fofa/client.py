@@ -19,7 +19,26 @@ _FOFA_ALLOWED_HOSTS = {
 
 
 class FofaError(Exception):
-    pass
+    """FOFA 调用错误。account_error=True 表示账号级致命错误（key 无效/过期/无 F 点/
+    权限不足等），这类错误重试也没用，上层应据此累计并在连续多次后暂停任务。"""
+
+    def __init__(self, message: str, account_error: bool = False):
+        super().__init__(message)
+        self.account_error = account_error
+
+
+# FOFA 账号级致命错误特征（errmsg 命中即视为账号无效，重试无意义）。
+_FOFA_ACCOUNT_ERROR_MARKERS = (
+    "820000", "820001", "-700", "账号无效", "账号已过期", "账号过期",
+    "无效的fofa", "无效的 fofa", "f点不足", "f币不足", "余额不足", "配额",
+    "权限不足", "没有权限", "会员", "account invalid", "invalid key",
+    "expired", "insufficient", "quota", "permission", "unauthorized", "forbidden",
+)
+
+
+def _is_account_error(errmsg: str) -> bool:
+    text = str(errmsg or "").lower()
+    return any(m in text for m in _FOFA_ACCOUNT_ERROR_MARKERS)
 
 
 def _qbase64(query: str) -> str:
@@ -64,7 +83,8 @@ async def search(key: str, query: str, page: int = 1, size: int = 100,
         # 一路冒到 orchestrator 主循环（外部 API 不可用是常态，应降级而非告警）。
         raise FofaError(f"FOFA 请求失败: {type(e).__name__}: {e}") from e
     if data.get("error"):
-        raise FofaError(f"FOFA 错误: {data.get('errmsg')}")
+        errmsg = data.get("errmsg")
+        raise FofaError(f"FOFA 错误: {errmsg}", account_error=_is_account_error(errmsg))
     return {
         "fields": fields.split(","),
         "results": data.get("results", []),

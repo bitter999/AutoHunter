@@ -580,6 +580,13 @@ async def start_task(task_id: str, session: AsyncSession = Depends(get_session))
     if not task:
         raise HTTPException(404, "任务不存在")
     task.status = "running"
+    # 重启即清空 FOFA 账号失败计数与错误标记：用户通常已换/续了 key，
+    # 否则旧计数 ≥ 阈值会导致刚启动又被自动暂停。
+    if task.fofa_config and task.fofa_config.get("fofa_auth_fail_count"):
+        fc = dict(task.fofa_config)
+        fc["fofa_auth_fail_count"] = 0
+        fc.pop("last_fofa_error", None)
+        task.fofa_config = fc
     await session.commit()
     await manager.ensure_running(task_id)
     await session.refresh(task)
