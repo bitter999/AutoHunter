@@ -124,6 +124,9 @@ ROUTES: tuple[SiteRoute, ...] = (
 _ROUTE_BY_SOURCE = {r.source: r for r in ROUTES}
 DISCOVERY_ROUTES = tuple(r for r in ROUTES if r.phase == 0)
 FOLLOWUP_ROUTES = tuple(r for r in ROUTES if r.phase > 0)
+# 开局并发入队的全部固定路线（侦察 + 主题深挖）。单站协作要「快」，
+# 5 条主题路线不再苦等侦察跑完，开局即和侦察一起并发抢 worker。
+INITIAL_ROUTES = DISCOVERY_ROUTES + FOLLOWUP_ROUTES
 FOCUSED_ROUTE = SiteRoute(
     source="site_focus",
     label="定向 API 追打",
@@ -217,8 +220,10 @@ def render_context(
             "打穿就 submit_finding；差一步（有据点但缺 ID/凭据/回显）就写 deepen_lead，"
             "系统会自动接力深挖、出洞后还会自动扩大危害；确认无洞也要说清测了哪些入口、为何不通。"
             "不要首页加几个常见路径扫一遍就 finish。",
-            "- 复用侦察：前序 site_map/site_js 已盘点全站入口与 JS/API（见下方覆盖摘要）。"
-            "优先在这些已知入口上做本路线的定向验证，别从零重新泛泛侦察，把算力花在真正打穿上。",
+            "- 复用侦察：site_map/site_js 侦察路线与你并发在跑，成果会陆续上报。"
+            "下方【若已有覆盖摘要】就优先在这些已知入口上做本路线的定向验证，别从零重复侦察；"
+            "【若暂无覆盖摘要】说明侦察还在跑，你直接按本路线 focus 自己快速摸一遍相关入口就开打，"
+            "不要空等侦察——先扒首页/JS 找本路线相关接口（如认证路线找登录/越权接口），边测边深挖。",
         ]
     if site_info.strip():
         lines += ["", "# 用户提供的目标相关信息", site_info.strip()[:2000]]

@@ -1989,12 +1989,9 @@ class TaskRunner:
                         },
                     ))
 
-            # 单站协作：discovery 侦察路线正常跑完 → 自动派发 5 条主题深挖路线（先侦察后分工）。
-            # 只在 discovery 真正产出侦察结论(no_vuln/found)且没有待深挖 lead 时派：
-            #   - 配额/临时 LLM 错误、worker 崩溃(error)、超时 → discovery 会回队重挖或转 dead，
-            #     此时侦察成果不完整，派主题只会退化成泛扫，等 discovery 真跑完再派；
-            #   - discovery 自己还带 actionable deepen_lead(要回火深挖) → 先让它把侦察这条线打透，
-            #     避免主题路线与 discovery 深挖并行、抢在侦察收尾前泛扫。
+            # 单站协作幂等兜底：主题深挖路线现在已在开局(_site_collect)与侦察路线一起
+            # 并发入队，这里不再是必经门禁，只作兜底——万一开局某条主题路线入队失败，
+            # discovery 侦察路线跑完后在此补派一次（靠 source 存在性去重，正常情况全跳过=no-op）。
             _theme_deepen_lead = (result.get("deepen_lead") or "").strip()
             _discovery_ok = (verdict == Verdict.no_vuln.value or verdict == Verdict.found.value or findings)
             if _discovery_ok and not _is_actionable_worker_deepen_lead(_theme_deepen_lead):

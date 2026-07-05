@@ -368,7 +368,12 @@ async def _site_collect(session: AsyncSession, task: Task) -> int:
             select(Target.source).where(Target.task_id == task.id, Target.host == host)
         )).all()
         existing_sources = {r[0] for r in existing}
-        for route in site_collab.DISCOVERY_ROUTES:
+        # 开局就把侦察(phase0)+5 条主题深挖(phase1)路线一次性全部并发入队。
+        # 之前只入队侦察路线、等它跑完才补派主题路线，导致「能快速出洞的
+        # 认证越权路线」被侦察串行硬拖到几十分钟。改回并发：侦察 worker 产出的
+        # coverage 仍会通过 _build_coverage_context 喂给后启动的主题 worker，
+        # 成果照样复用、又不牺牲开局速度。priority 高的侦察路线天然先抢并发。
+        for route in site_collab.INITIAL_ROUTES:
             if route.source in existing_sources:
                 continue
             session.add(Target(
