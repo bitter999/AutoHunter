@@ -449,10 +449,11 @@ async def _fofa_collect(
         res = await engine.search(key, cur_query, page=next_cursor, page_size=size,
                                   base_url=base_url)
     except QuakeRateLimitError as e:
-        # Quake 专用限流异常（带 retry_after 提示）
+        # Quake 专用限流异常
         err = f"{e}"[:300]
         rl_count = int(cfg.get("rate_limit_count", 0)) + 1
-        backoff = min(10 * (2 ** (rl_count - 1)), 300)
+        # 不 sleep：设足够长的冷却期（60s→120s→240s→480s），让调度器跳过
+        backoff = min(60 * (2 ** (rl_count - 1)), 600)
         cfg["rate_limit_count"] = rl_count
         cfg["rate_limit_until"] = time.monotonic() + backoff
         cfg["last_fofa_error"] = err
@@ -460,11 +461,10 @@ async def _fofa_collect(
         cfg["fofa_auth_fail_count"] = 0
         await report(
             "fofa_error",
-            f"{engine.display_name} 频率限制（第 {rl_count} 次），等待 {backoff} 秒后重试：{err}",
+            f"{engine.display_name} 频率限制（第 {rl_count} 次），冷却 {backoff} 秒",
             fofa_error=err, cursor=cursor, retry_after=backoff, rate_limit_count=rl_count,
         )
         task.fofa_config = {**cfg}
-        await asyncio.sleep(backoff)
         return 0
     except (ValueError, Exception) as e:
         err = f"{e}"[:300]
@@ -475,7 +475,8 @@ async def _fofa_collect(
         ))
         if _is_rate_limit:
             rl_count = int(cfg.get("rate_limit_count", 0)) + 1
-            backoff = min(10 * (2 ** (rl_count - 1)), 300)
+            # 不 sleep，设冷却期让调度器跳过
+            backoff = min(60 * (2 ** (rl_count - 1)), 600)
             cfg["rate_limit_count"] = rl_count
             cfg["rate_limit_until"] = time.monotonic() + backoff
             cfg["last_fofa_error"] = err
@@ -483,11 +484,10 @@ async def _fofa_collect(
             cfg["fofa_auth_fail_count"] = 0
             await report(
                 "fofa_error",
-                f"{engine.display_name} 频率限制（第 {rl_count} 次），等待 {backoff} 秒后重试：{err}",
+                f"{engine.display_name} 频率限制（第 {rl_count} 次），冷却 {backoff} 秒",
                 fofa_error=err, cursor=cursor, retry_after=backoff, rate_limit_count=rl_count,
             )
             task.fofa_config = {**cfg}
-            await asyncio.sleep(backoff)
             return 0
         cfg["last_fofa_error"] = err
         cfg["collector_phase"] = "fofa_error"
