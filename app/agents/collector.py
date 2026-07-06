@@ -25,7 +25,7 @@ from app.agents import collector_llm, playbook_router, prefilter, scorer, site_c
 from app.agents import target_cluster
 from app.agents.prompts import is_enterprise_src
 from app.db.models import Target, Task
-from app.engines import get_engine, EngineResult
+from app.engines import get_engine, EngineResult, QuakeRateLimitError
 from app.tools.leakcreds import query_leaked_creds
 from app.llm.client import LLMClient, LLMError
 from app.settings_service import llm_client_for_task_optional, resolve_engine_config, resolve_skip_score_threshold
@@ -433,6 +433,21 @@ async def _fofa_collect(
     try:
         res = await engine.search(key, cur_query, page=next_cursor, page_size=size,
                                   base_url=base_url)
+    except QuakeRateLimitError as e:
+        err = f"{e}"[:300]
+        cfg["last_fofa_error"] = err
+        cfg["collector_phase"] = "fofa_error"
+        cfg["fofa_auth_fail_count"] = 0
+        # 频率限制：记录并等待后再重试，避免空转刷屏
+        wait = getattr(e, "retry_after", 5.0)
+        await report(
+            "fofa_error",
+            f"{engine.display_name} 频率限制，等待 {int(wait)} 秒后重试：{err}",
+            fofa_error=err, cursor=cursor, retry_after=wait,
+        )
+        task.fofa_config = {**cfg}
+        await asyncio.sleep(wait)
+        return 0
     except (ValueError, Exception) as e:
         err = f"{e}"[:300]
         cfg["last_fofa_error"] = err

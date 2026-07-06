@@ -1,9 +1,26 @@
 """360 Quake 搜索引擎适配。"""
 from __future__ import annotations
 
+import asyncio
+import re
+
 import httpx
 
 from app.engines.base import EngineResult, SearchEngine, register_engine
+
+
+class QuakeRateLimitError(ValueError):
+    """Quake API 频率限制错误，调用方应延迟重试。"""
+    def __init__(self, message: str, retry_after: float = 5.0):
+        super().__init__(message)
+        self.retry_after = retry_after
+
+
+# 判断 Quake 返回是否为频率限制
+_RATE_LIMIT_PATTERNS = re.compile(
+    r"调用API过于频繁|请求太频繁|rate limit|too many|q3005",
+    re.I,
+)
 
 
 @register_engine
@@ -46,6 +63,9 @@ class QuakeEngine(SearchEngine):
 
         if data.get("code") != 0:
             msg = data.get("message", str(data.get("data", "")))
+            # 频率限制 → 抛专用异常，让调用方延迟重试
+            if _RATE_LIMIT_PATTERNS.search(msg):
+                raise QuakeRateLimitError(f"Quake 频率限制: {msg}")
             raise ValueError(f"Quake 错误: {msg}")
 
         items = data.get("data", [])
